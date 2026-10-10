@@ -1,0 +1,6 @@
+{
+  "name": "VitalsDrift",
+  "description": "Cardiovascular & blood pressure baseline drift analyzer with moving average velocity tracking, contextual logging, and doctor reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
