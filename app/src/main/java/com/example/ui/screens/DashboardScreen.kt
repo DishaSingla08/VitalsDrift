@@ -1,6 +1,5 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,11 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -31,7 +28,6 @@ import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,7 +41,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.BloodPressureReading
 import com.example.data.WearableHealthSnapshot
 import com.example.domain.DriftAnalysis
 import com.example.ui.VitalsUiState
@@ -57,8 +52,6 @@ import com.example.ui.components.MetricType
 import com.example.ui.components.VitalsOverviewCard
 import com.example.ui.components.WellnessScoreAndActionRow
 import com.example.ui.theme.VitalsTheme
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 @Composable
@@ -66,7 +59,6 @@ fun DashboardScreen(
     uiState: VitalsUiState,
     onOpenLogSheet: () -> Unit,
     onSelectRange: (ChartRangeOption) -> Unit,
-    onDeleteReading: (Long) -> Unit,
     onNavigateToReport: () -> Unit,
     onExplainMetric: (MetricType) -> Unit,
     onSyncWearables: () -> Unit,
@@ -80,22 +72,22 @@ fun DashboardScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1. Hero VitalsDrift Overview Card (3 dials: 30D average, Center Delta arch gauge, 180D baseline + drift curve)
+            // 1. Hero VitalsDrift Overview Card (3 dials: 30D MA, Tachometer Arch Gauge for ΔBP, 180D Baseline + Wave Curve)
             item {
                 VitalsOverviewCard(
                     analysis = uiState.driftAnalysis
                 )
             }
 
-            // 2. Cardiovascular Wellness Score & + Log BP action button row
+            // 2. Cardiovascular Wellness Score & + Log BP Capsule Action Button Row
             item {
                 WellnessScoreAndActionRow(
-                    score = calculateCardioScore(uiState.driftAnalysis),
+                    score = uiState.cardiovascularWellnessScore,
                     onOpenLogSheet = onOpenLogSheet
                 )
             }
 
-            // 3. Early Detection Alert Card with arterial diagram, drift velocity notice & expandable Zone 2 protocol
+            // 3. Early Detection Alert Card with arterial diagram, drift velocity indicator & expandable Zone 2 protocol
             item {
                 EarlyDetectionAlertCard(
                     analysis = uiState.driftAnalysis,
@@ -107,11 +99,11 @@ fun DashboardScreen(
             item {
                 GenerateReportBannerButton(
                     onClick = onNavigateToReport,
-                    totalReadings = uiState.readings.size
+                    totalReadings = uiState.logs.size
                 )
             }
 
-            // 5. Android Health Connect & Wearables Integration Card (Resting HR, HRV, Sleep, Steps)
+            // 5. Android Health Connect & Wearables Integration Card (Resting HR, HRV, Sleep, Steps + Sync)
             item {
                 HealthConnectWearablesCard(
                     snapshot = uiState.wearableSnapshot,
@@ -119,17 +111,17 @@ fun DashboardScreen(
                 )
             }
 
-            // 6. Context Validator Alert (if recent readings flagged within 30 min of high exertion/stress)
-            if (uiState.driftAnalysis.nonRestingAlertCountRecent > 0) {
+            // 6. Context Validator Alert (Shown if readings were quarantined due to exercise or stress)
+            if (uiState.driftAnalysis.quarantinedCount > 0 || uiState.driftAnalysis.nonRestingAlertCountRecent > 0) {
                 item {
                     ContextValidatorAlertCard(
-                        count = uiState.driftAnalysis.nonRestingAlertCountRecent,
+                        count = uiState.driftAnalysis.quarantinedCount,
                         onExplainQuarantine = { onExplainMetric(MetricType.CONTEXT_QUARANTINE) }
                     )
                 }
             }
 
-            // 7. Vascular Drift Curves Chart (30D, 90D, 180D moving average curves with raw spot dots)
+            // 7. Vascular Drift Curves Chart (30D, 90D, 180D moving average curves with raw spot logs)
             item {
                 BpTrendChart(
                     dataPoints = uiState.chartPoints,
@@ -147,18 +139,7 @@ fun DashboardScreen(
                 )
             }
 
-            // 9. Recent Readings - Compact unified clinical card with NO blank space and NO morning tab
-            val recentList = uiState.readings.take(5)
-            item {
-                RecentLogsCard(
-                    readings = recentList,
-                    totalCount = uiState.readings.size,
-                    onDeleteReading = onDeleteReading,
-                    onOpenLogSheet = onOpenLogSheet
-                )
-            }
-
-            // 10. Medical Disclaimer Banner
+            // 9. Medical Disclaimer Banner
             item {
                 MedicalDisclaimerBanner()
             }
@@ -176,224 +157,6 @@ fun DashboardScreen(
             containerColor = MaterialTheme.colorScheme.primary,
             contentColor = MaterialTheme.colorScheme.onPrimary
         )
-    }
-}
-
-private fun calculateCardioScore(analysis: DriftAnalysis): Int {
-    val base = 90
-    val deltaPenalty = (analysis.deltaSystolic.coerceAtLeast(0.0) * 2.8).toInt()
-    val quarantinePenalty = (analysis.nonRestingAlertCountRecent * 2).coerceAtMost(10)
-    return (base - deltaPenalty - quarantinePenalty).coerceIn(50, 96)
-}
-
-@Composable
-private fun RecentLogsCard(
-    readings: List<BloodPressureReading>,
-    totalCount: Int,
-    onDeleteReading: (Long) -> Unit,
-    onOpenLogSheet: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("recent_logs_card"),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            // Header Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Recent Logs",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text(
-                            text = "$totalCount total",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (readings.isEmpty()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "No readings logged yet",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    TextButton(onClick = onOpenLogSheet) {
-                        Text("Log First Reading")
-                    }
-                }
-            } else {
-                readings.forEachIndexed { index, reading ->
-                    CompactReadingRow(
-                        reading = reading,
-                        onDelete = { onDeleteReading(reading.id) }
-                    )
-                    if (index < readings.lastIndex) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 2.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ReadingLogItemCard(
-    reading: BloodPressureReading,
-    onDelete: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("log_item_${reading.id}"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        CompactReadingRow(
-            reading = reading,
-            onDelete = onDelete
-        )
-    }
-}
-
-@Composable
-private fun CompactReadingRow(
-    reading: BloodPressureReading,
-    onDelete: () -> Unit
-) {
-    val dateFormat = SimpleDateFormat("MMM dd • h:mm a", Locale.getDefault())
-    val isResting = reading.activityContext.isIdealForBaseline
-    val colors = VitalsTheme.colors
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 6.dp)
-            .testTag("log_item_${reading.id}"),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.weight(1f)
-        ) {
-            // Category color dot
-            Box(
-                modifier = Modifier
-                    .size(9.dp)
-                    .background(
-                        when {
-                            reading.systolic >= 140 || reading.diastolic >= 90 -> colors.statusCritical
-                            reading.systolic >= 130 || reading.diastolic >= 80 -> colors.statusWarning
-                            reading.systolic >= 120 -> colors.statusWarning
-                            else -> colors.statusStable
-                        },
-                        CircleShape
-                    )
-            )
-
-            Column {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        text = "${reading.systolic}/${reading.diastolic}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Text(
-                        text = "mmHg",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "HR ${reading.heartRate} bpm",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(2.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = dateFormat.format(Date(reading.timestamp)),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "•",
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = reading.activityContext.displayName.substringBefore(" ("),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (isResting) colors.statusStable else colors.statusCritical
-                    )
-                }
-            }
-        }
-
-        IconButton(
-            onClick = onDelete,
-            modifier = Modifier
-                .size(32.dp)
-                .testTag("delete_reading_${reading.id}")
-        ) {
-            Icon(
-                imageVector = Icons.Default.Delete,
-                contentDescription = "Delete Reading",
-                tint = MaterialTheme.colorScheme.outlineVariant,
-                modifier = Modifier.size(16.dp)
-            )
-        }
     }
 }
 
@@ -489,11 +252,19 @@ private fun HealthConnectWearablesCard(
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp)
                     )
-                    Text(
-                        text = "Health Connect & Wearables",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Column {
+                        Text(
+                            text = "Health Connect & Wearables",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = snapshot.connectedSource,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 TextButton(onClick = onSync, modifier = Modifier.testTag("sync_wearables_btn")) {
@@ -615,7 +386,7 @@ private fun ContextValidatorAlertCard(
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Recent readings were recorded within 30 min of physical workouts or acute stress. These are quarantined from baseline moving average velocity to avoid artificial skew.",
+                    text = "Entries recorded within 30 min of high exertion/stress or flagged workouts are quarantined from long-term baseline velocity calculations to prevent artificial skew.",
                     style = MaterialTheme.typography.bodySmall,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurface,

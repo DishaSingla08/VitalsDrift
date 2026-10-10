@@ -1,6 +1,9 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,15 +12,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -25,7 +33,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,12 +47,17 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.MeasurementEntity
 import com.example.ui.VitalsUiState
+import com.example.ui.theme.VitalsTheme
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class HistoryFilter(val label: String) {
     ALL("All Logs"),
-    RESTING("Resting Only"),
-    FLAGGED("Flagged Non-Resting")
+    RESTING("Clean Resting"),
+    QUARANTINED("Quarantined")
 }
 
 @Composable
@@ -60,13 +72,16 @@ fun HistoryScreen(
     var selectedFilter by remember { mutableStateOf(HistoryFilter.ALL) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
 
-    val filteredReadings = remember(uiState.readings, selectedFilter) {
+    val filteredLogs = remember(uiState.logs, selectedFilter) {
         when (selectedFilter) {
-            HistoryFilter.ALL -> uiState.readings
-            HistoryFilter.RESTING -> uiState.readings.filter { it.activityContext.isIdealForBaseline }
-            HistoryFilter.FLAGGED -> uiState.readings.filter { !it.activityContext.isIdealForBaseline }
+            HistoryFilter.ALL -> uiState.logs
+            HistoryFilter.RESTING -> uiState.logs.filter { !it.isQuarantined }
+            HistoryFilter.QUARANTINED -> uiState.logs.filter { it.isQuarantined }
         }
     }
+
+    val cleanCount = remember(uiState.logs) { uiState.logs.count { !it.isQuarantined } }
+    val quarantinedCount = remember(uiState.logs) { uiState.logs.count { it.isQuarantined } }
 
     Column(
         modifier = modifier
@@ -91,7 +106,7 @@ fun HistoryScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${filteredReadings.size} of ${uiState.readings.size} readings shown",
+                        text = "${filteredLogs.size} of ${uiState.logs.size} entries ($cleanCount clean, $quarantinedCount quarantined)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -108,7 +123,7 @@ fun HistoryScreen(
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
-                    if (uiState.readings.isNotEmpty()) {
+                    if (uiState.logs.isNotEmpty()) {
                         IconButton(
                             onClick = { showClearConfirmDialog = true },
                             modifier = Modifier.testTag("clear_all_btn")
@@ -125,7 +140,7 @@ fun HistoryScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // 3 Clean Filter Chips (All Logs, Resting Only, Flagged Non-Resting)
+            // Filter Chips
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -145,8 +160,8 @@ fun HistoryScreen(
             }
         }
 
-        // Readings List takes remaining screen with weight(1f), eliminating any blank gap
-        if (filteredReadings.isEmpty()) {
+        // Dedicated Raw Measurement Logs List
+        if (filteredLogs.isEmpty()) {
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -170,7 +185,7 @@ fun HistoryScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(onClick = onOpenLogSheet) {
                         Icon(imageVector = Icons.Default.Add, contentDescription = null)
-                        Spacer(modifier = Modifier.height(0.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text("Log Reading")
                     }
                     OutlinedButton(onClick = onSeedSampleData) {
@@ -186,10 +201,10 @@ fun HistoryScreen(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(filteredReadings, key = { it.id }) { reading ->
-                    ReadingLogItemCard(
-                        reading = reading,
-                        onDelete = { onDeleteReading(reading.id) }
+                items(filteredLogs, key = { it.id }) { log ->
+                    MeasurementLogCard(
+                        log = log,
+                        onDelete = { onDeleteReading(log.id) }
                     )
                 }
             }
@@ -201,7 +216,7 @@ fun HistoryScreen(
         AlertDialog(
             onDismissRequest = { showClearConfirmDialog = false },
             title = { Text("Clear All Readings?") },
-            text = { Text("This will erase all recorded readings from your local device storage. You can re-populate sample data anytime.") },
+            text = { Text("This will erase all recorded readings from your local Room database. You can re-populate sample data anytime.") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -218,5 +233,143 @@ fun HistoryScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun MeasurementLogCard(
+    log: MeasurementEntity,
+    onDelete: () -> Unit
+) {
+    val dateFormat = SimpleDateFormat("EEE, MMM dd • h:mm a", Locale.getDefault())
+    val colors = VitalsTheme.colors
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("log_item_${log.id}"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                // Category color pill
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .background(
+                            when {
+                                log.systolic >= 140 || log.diastolic >= 90 -> colors.statusCritical
+                                log.systolic >= 130 || log.diastolic >= 80 -> colors.statusWarning
+                                log.systolic >= 120 -> colors.statusWarning
+                                else -> colors.statusStable
+                            },
+                            CircleShape
+                        )
+                )
+
+                Column {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            text = "${log.systolic}/${log.diastolic}",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "mmHg",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "HR ${log.heartRate} bpm",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(3.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = dateFormat.format(Date(log.timestamp)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(text = "•", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            text = log.contextTag,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (log.isQuarantined) colors.statusWarning else colors.statusStable
+                        )
+                        if (log.isQuarantined) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(10.dp)
+                                    )
+                                    Text(
+                                        text = "QUARANTINED",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (!log.notes.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = log.notes,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.testTag("delete_reading_${log.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Delete Reading",
+                    tint = MaterialTheme.colorScheme.outlineVariant
+                )
+            }
+        }
     }
 }

@@ -4,43 +4,17 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
-import androidx.room.TypeConverter
-import androidx.room.TypeConverters
-
-class Converters {
-    @TypeConverter
-    fun fromActivityContext(value: ActivityContext): String = value.name
-
-    @TypeConverter
-    fun toActivityContext(value: String): ActivityContext =
-        try { ActivityContext.valueOf(value) } catch (e: Exception) { ActivityContext.RESTING }
-
-    @TypeConverter
-    fun fromTimeOfDay(value: TimeOfDay): String = value.name
-
-    @TypeConverter
-    fun toTimeOfDay(value: String): TimeOfDay =
-        try { TimeOfDay.valueOf(value) } catch (e: Exception) { TimeOfDay.MORNING }
-
-    @TypeConverter
-    fun fromMeasurementArm(value: MeasurementArm): String = value.name
-
-    @TypeConverter
-    fun toMeasurementArm(value: MeasurementArm?): String = value?.name ?: MeasurementArm.LEFT.name
-
-    @TypeConverter
-    fun toArm(value: String): MeasurementArm =
-        try { MeasurementArm.valueOf(value) } catch (e: Exception) { MeasurementArm.LEFT }
-}
 
 @Database(
-    entities = [BloodPressureReading::class],
-    version = 1,
+    entities = [
+        MeasurementEntity::class
+    ],
+    version = 3,
     exportSchema = false
 )
-@TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
-    abstract fun bloodPressureDao(): BloodPressureDao
+
+    abstract fun measurementDao(): MeasurementDao
 
     companion object {
         @Volatile
@@ -52,7 +26,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "vitals_drift.db"
-                ).fallbackToDestructiveMigration().build()
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }

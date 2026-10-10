@@ -1,8 +1,8 @@
 package com.example.domain
 
-import com.example.data.ActivityContext
-import com.example.data.BloodPressureReading
-import com.example.data.TimeOfDay
+import com.example.data.BpCategory
+import com.example.data.MeasurementEntity
+import java.util.Calendar
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
@@ -28,27 +28,27 @@ enum class DriftTriageStatus(
 ) {
     STABLE(
         "Stable Baseline",
-        "Cardiovascular equilibrium maintained (ΔBP < +2 mmHg). No significant vascular drift detected.",
+        "Cardiovascular equilibrium maintained (ΔBP < +2.0 mmHg). No significant vascular drift detected.",
         0xFF10B981 // Green
     ),
     IMPROVING(
         "Downward Trend",
-        "Baseline blood pressure is declining (ΔBP < -2 mmHg). Favorable response to lifestyle or medication.",
+        "Baseline blood pressure is declining (ΔBP < -2.0 mmHg). Favorable vascular elasticity.",
         0xFF06B6D4 // Teal/Cyan
     ),
     EARLY_DRIFT(
         "Early Baseline Drift",
-        "Subtle upward drift detected (+2 to +5 mmHg). Early vascular stiffness or sympathetic activity; lifestyle intervention recommended.",
+        "Subtle upward drift detected (+2.0 to +5.0 mmHg). Early action window open to prevent permanent arterial stiffness.",
         0xFFF59E0B // Amber
     ),
     SIGNIFICANT_SHIFT(
-        "Requires Attention",
-        "Significant upward shift (> +5 mmHg drift). Prompting 7-day clinical home monitoring protocol.",
+        "Significant Shift",
+        "Significant upward shift (> +5.0 mmHg drift). Recommending 7-day home clinical monitoring protocol.",
         0xFFEF4444 // Red
     ),
     INSUFFICIENT_DATA(
         "Calibrating Baseline",
-        "Additional logs needed (minimum 5 entries across multiple days) to calculate accurate moving averages.",
+        "Additional logs needed (minimum 3 entries) to calculate reliable multi-month moving averages.",
         0xFF64748B // Slate
     )
 }
@@ -74,6 +74,8 @@ data class DriftAnalysis(
     val eveningAvg: MovingAverageSummary?,
     val nonRestingAlertCountRecent: Int,
     val totalReadingsCount: Int,
+    val cleanReadingsCount: Int,
+    val quarantinedCount: Int,
     val lifestyleTips: List<LifestyleRecommendation>
 )
 
@@ -91,8 +93,8 @@ data class ChartDataPoint(
 
 object BaselineVelocityEngine {
 
-    fun analyze(readings: List<BloodPressureReading>): DriftAnalysis {
-        if (readings.isEmpty()) {
+    fun analyze(logs: List<MeasurementEntity>): DriftAnalysis {
+        if (logs.isEmpty()) {
             return DriftAnalysis(
                 recent30DayAvg = null,
                 intermediate90DayAvg = null,
@@ -105,6 +107,8 @@ object BaselineVelocityEngine {
                 eveningAvg = null,
                 nonRestingAlertCountRecent = 0,
                 totalReadingsCount = 0,
+                cleanReadingsCount = 0,
+                quarantinedCount = 0,
                 lifestyleTips = emptyList()
             )
         }
@@ -114,34 +118,44 @@ object BaselineVelocityEngine {
         val ninetyDaysAgo = now - TimeUnit.DAYS.toMillis(90)
         val oneEightyDaysAgo = now - TimeUnit.DAYS.toMillis(180)
 
-        // For true baseline calculations, filter out high stress/post exercise artifact readings if possible,
-        // but if user has few resting readings, include all.
-        val validRestingReadings = readings.filter { it.activityContext.isIdealForBaseline }
-        val pool = if (validRestingReadings.size >= 10) validRestingReadings else readings
+        // Clean logs: exclude quarantined (isQuarantined == true) to prevent post-workout artifacts
+        val cleanLogs = logs.filter { !it.isQuarantined }
+        val quarantinedTotal = logs.count { it.isQuarantined }
 
-        val readings30d = pool.filter { it.timestamp >= thirtyDaysAgo }
-        val readings90d = pool.filter { it.timestamp >= ninetyDaysAgo }
-        val readings180d = pool.filter { it.timestamp >= oneEightyDaysAgo }
+        val pool = if (cleanLogs.size >= 5) cleanLogs else logs
 
-        val avg30d = calculateAverage(readings30d)
-        val avg90d = calculateAverage(readings90d)
-        val avg180d = calculateAverage(if (readings180d.isNotEmpty()) readings180d else pool)
+        val logs30d = pool.filter { it.timestamp >= thirtyDaysAgo }
+        val logs90d = pool.filter { it.timestamp >= ninetyDaysAgo }
+        val logs180d = pool.filter { it.timestamp >= oneEightyDaysAgo }
 
-        // Count non-resting or high stress readings in last 7 days for context validator
+        val avg30d = calculateAverage(logs30d)
+        val avg90d = calculateAverage(logs90d)
+        val avg180d = calculateAverage(if (logs180d.isNotEmpty()) logs180d else pool)
+
+        // Quarantined / non-resting count in last 7 days
         val sevenDaysAgo = now - TimeUnit.DAYS.toMillis(7)
-        val nonRestingRecent = readings.count {
-            it.timestamp >= sevenDaysAgo && !it.activityContext.isIdealForBaseline
+        val nonRestingRecent = logs.count {
+            it.timestamp >= sevenDaysAgo && it.isQuarantined
         }
 
-        // Morning vs Evening calculations (from recent 30-day window)
-        val recentWindowReadings = readings.filter { it.timestamp >= thirtyDaysAgo }
-        val morningReadings = recentWindowReadings.filter { it.timeOfDay == TimeOfDay.MORNING }
-        val eveningReadings = recentWindowReadings.filter { it.timeOfDay == TimeOfDay.EVENING || it.timeOfDay == TimeOfDay.NIGHT }
+        // Morning vs Evening calculations (Morning: 5AM-12PM, Evening: 5PM-11PM)
+        val cal = Calendar.getInstance()
+        val logsRecentWindow = logs.filter { it.timestamp >= thirtyDaysAgo }
+        val morningLogs = logsRecentWindow.filter {
+            cal.timeInMillis = it.timestamp
+            val hour = cal.get(Calendar.HOUR_OF_DAY)
+            hour in 5..11
+        }
+        val eveningLogs = logsRecentWindow.filter {
+            cal.timeInMillis = it.timestamp
+            val hour = cal.get(Calendar.HOUR_OF_DAY)
+            hour in 17..23
+        }
 
-        val morningAvg = calculateAverage(morningReadings)
-        val eveningAvg = calculateAverage(eveningReadings)
+        val morningAvg = calculateAverage(morningLogs)
+        val eveningAvg = calculateAverage(eveningLogs)
 
-        if (avg30d == null || avg180d == null || readings.size < 5) {
+        if (avg30d == null || avg180d == null) {
             return DriftAnalysis(
                 recent30DayAvg = avg30d,
                 intermediate90DayAvg = avg90d,
@@ -153,20 +167,20 @@ object BaselineVelocityEngine {
                 morningAvg = morningAvg,
                 eveningAvg = eveningAvg,
                 nonRestingAlertCountRecent = nonRestingRecent,
-                totalReadingsCount = readings.size,
+                totalReadingsCount = logs.size,
+                cleanReadingsCount = cleanLogs.size,
+                quarantinedCount = quarantinedTotal,
                 lifestyleTips = getGeneralHeartTips()
             )
         }
 
         val deltaSystolic = avg30d.systolic - avg180d.systolic
         val deltaDiastolic = avg30d.diastolic - avg180d.diastolic
-
-        // Approximate monthly drift velocity over the 5-month gap between 30d and 180d
         val monthlyVelocity = deltaSystolic / 5.0
 
         val triageStatus = when {
-            deltaSystolic > 5.0 || deltaDiastolic > 4.5 -> DriftTriageStatus.SIGNIFICANT_SHIFT
-            deltaSystolic in 2.0..5.0 || deltaDiastolic in 1.5..4.5 -> DriftTriageStatus.EARLY_DRIFT
+            deltaSystolic > 5.0 -> DriftTriageStatus.SIGNIFICANT_SHIFT
+            deltaSystolic in 2.0..5.0 -> DriftTriageStatus.EARLY_DRIFT
             deltaSystolic < -2.0 -> DriftTriageStatus.IMPROVING
             else -> DriftTriageStatus.STABLE
         }
@@ -184,12 +198,14 @@ object BaselineVelocityEngine {
             morningAvg = morningAvg,
             eveningAvg = eveningAvg,
             nonRestingAlertCountRecent = nonRestingRecent,
-            totalReadingsCount = readings.size,
+            totalReadingsCount = logs.size,
+            cleanReadingsCount = cleanLogs.size,
+            quarantinedCount = quarantinedTotal,
             lifestyleTips = tips
         )
     }
 
-    private fun calculateAverage(list: List<BloodPressureReading>): MovingAverageSummary? {
+    private fun calculateAverage(list: List<MeasurementEntity>): MovingAverageSummary? {
         if (list.isEmpty()) return null
         val totalS = list.sumOf { it.systolic }
         val totalD = list.sumOf { it.diastolic }
@@ -216,7 +232,6 @@ object BaselineVelocityEngine {
     ): List<LifestyleRecommendation> {
         val list = mutableListOf<LifestyleRecommendation>()
 
-        // Check morning surge
         if (morningAvg != null && eveningAvg != null && (morningAvg.systolic - eveningAvg.systolic) > 12) {
             list.add(
                 LifestyleRecommendation(
@@ -224,7 +239,7 @@ object BaselineVelocityEngine {
                     title = "Morning Blood Pressure Surge Detected",
                     category = "Circadian Rhythm & Sleep",
                     impact = "-3 to -6 mmHg morning reduction",
-                    description = "Your morning readings average >12 mmHg higher than evening logs. Evaluate obstructive sleep apnea screening, avoid caffeine within 60 mins of waking, and take morning medications exactly as prescribed.",
+                    description = "Your morning readings average >12 mmHg higher than evening logs. Evaluate obstructive sleep apnea screening, avoid caffeine within 60 mins of waking, and take morning medications consistently.",
                     evidenceNote = "AHA guidelines highlight morning surges as a distinct cardiovascular risk marker."
                 )
             )
@@ -238,64 +253,66 @@ object BaselineVelocityEngine {
                         title = "Initiate 7-Day Clinical Home Monitoring",
                         category = "Clinical Action",
                         impact = "Diagnostic Confirmation",
-                        description = "Log two readings each morning and two each evening for 7 consecutive days while fully seated. Export the compiled clinical PDF/text summary to your primary care physician.",
+                        description = "Log two readings each morning and two each evening for 7 consecutive days while seated. Export the compiled clinical PDF summary to your physician.",
                         evidenceNote = "Gold standard home BP protocol recommended by ACC/AHA 2017 guidelines."
                     )
                 )
                 list.add(
                     LifestyleRecommendation(
                         id = "sodium_potassium",
-                        title = "Target Dietary Sodium to < 1,500 mg/day",
+                        title = "Cap Dietary Sodium to < 1,500 mg/day",
                         category = "Nutrition (DASH)",
                         impact = "-5 to -8 mmHg systolic reduction",
-                        description = "Reduce processed foods and prioritize dietary potassium (spinach, avocados, white beans, sweet potatoes) to promote endothelial vasodilation.",
+                        description = "Reduce processed foods and prioritize dietary potassium (spinach, avocados, white beans) to promote endothelial vasodilation.",
                         evidenceNote = "DASH diet clinical trials demonstrated systolic drops within 14 days."
-                    )
-                )
-                list.add(
-                    LifestyleRecommendation(
-                        id = "zone2_cardio",
-                        title = "Zone 2 Low-Intensity Aerobic Conditioning",
-                        category = "Vascular Exercise",
-                        impact = "-4 to -7 mmHg baseline reduction",
-                        description = "150 minutes weekly of conversational brisk walking, cycling, or swimming. Lowers peripheral vascular resistance without hypertensive cortisol spikes.",
-                        evidenceNote = "Enhances nitric oxide production and arterial compliance."
                     )
                 )
             }
             DriftTriageStatus.EARLY_DRIFT -> {
                 list.add(
                     LifestyleRecommendation(
-                        id = "sodium_nudge",
-                        title = "Subtle Sodium Modulation & Hydration",
-                        category = "Dietary Micro-habit",
-                        impact = "-2 to -4 mmHg systolic drift reversal",
-                        description = "Audit hidden sodium in restaurant dining, bread, and condiments. Drink 2–2.5L water daily to maintain consistent renal filtration.",
-                        evidenceNote = "Early vascular drift is frequently sensitive to subclinical fluid retention."
+                        id = "sodium_reduction",
+                        title = "Modest Sodium Reduction (< 2,000 mg/day)",
+                        category = "Nutrition",
+                        impact = "-3 to -5 mmHg baseline stabilization",
+                        description = "Subtle drift is highly sensitive to sodium intake. Audit packaged broths and takeout meals over the next 2 weeks.",
+                        evidenceNote = "Cochrane review: moderate sodium reduction halts pre-hypertensive trajectory."
                     )
                 )
                 list.add(
                     LifestyleRecommendation(
-                        id = "sleep_extension",
-                        title = "Sleep Consistency & Parasympathetic Tone",
-                        category = "Rest & Recovery",
-                        impact = "-3 mmHg nocturnal dip restoration",
-                        description = "Aim for 7.5 to 8.5 hours in a cool, dark room. Elevated baseline drift often reflects chronic autonomic sympathetic overdrive or short sleep duration.",
-                        evidenceNote = "Sleep deficiency blunts nocturnal dipping by 40%."
+                        id = "zone2_exercise",
+                        title = "Zone 2 Cardiovascular Aerobic Conditioning",
+                        category = "Exercise Physiology",
+                        impact = "-4 to -6 mmHg velocity reduction",
+                        description = "Perform 20–30 minutes of conversational walking, swimming, or stationary cycling 4 times per week to stimulate endothelial nitric oxide.",
+                        evidenceNote = "Low-intensity aerobic exercise enhances vascular distensibility without cortisol surges."
                     )
                 )
                 list.add(
                     LifestyleRecommendation(
-                        id = "stress_respiration",
-                        title = "Resonant 4-7-8 Breathing (5 min daily)",
-                        category = "Autonomic Regulation",
-                        impact = "-2 to -5 mmHg acute and chronic stabilization",
-                        description = "Slow diaphragmatic breathing at 6 breaths per minute resets baroreceptor sensitivity and downregulates renin-angiotensin tone.",
-                        evidenceNote = "Clinically validated for baroreflex modulation."
+                        id = "sleep_hygiene",
+                        title = "Restore Sleep Duration & Nocturnal Dip",
+                        category = "Sleep Architecture",
+                        impact = "-2 to -4 mmHg nocturnal normalization",
+                        description = "Target >7.5 hours of uninterrupted sleep. Avoid blue screen light 45 min prior to sleep to support natural nocturnal dipping.",
+                        evidenceNote = "Blunted nocturnal dipping is closely correlated with progressive 180-day baseline drift."
                     )
                 )
             }
-            else -> {
+            DriftTriageStatus.STABLE, DriftTriageStatus.IMPROVING -> {
+                list.add(
+                    LifestyleRecommendation(
+                        id = "maintenance",
+                        title = "Vascular Elasticity Maintenance",
+                        category = "Longevity",
+                        impact = "Baseline Stability",
+                        description = "Your multi-month moving average velocity is stable within +2 mmHg. Continue current hydration, regular activity, and resting measurement habits.",
+                        evidenceNote = "Consistency in resting measurements provides the highest diagnostic accuracy."
+                    )
+                )
+            }
+            DriftTriageStatus.INSUFFICIENT_DATA -> {
                 list.addAll(getGeneralHeartTips())
             }
         }
@@ -303,44 +320,36 @@ object BaselineVelocityEngine {
         return list
     }
 
-    private fun getGeneralHeartTips(): List<LifestyleRecommendation> = listOf(
-        LifestyleRecommendation(
-            id = "consistent_cuff",
-            title = "Strict Measurement Protocol",
-            category = "Tracking Best Practice",
-            impact = "Ensures clean moving averages",
-            description = "Empty your bladder, sit quietly with back supported and feet uncrossed for 5 minutes before pressing start. Keep cuff at exact heart level.",
-            evidenceNote = "Measurement errors account for up to 10 mmHg artificial variance."
-        ),
-        LifestyleRecommendation(
-            id = "dash_balance",
-            title = "Maintain DASH Nutrient Density",
-            category = "Preventative Nutrition",
-            impact = "Preserves healthy baseline elasticity",
-            description = "Continue eating high-fiber whole grains, leafy greens, nuts, and berries with natural magnesium and polyphenols.",
-            evidenceNote = "Long-term vascular protection and arterial compliance."
+    private fun getGeneralHeartTips(): List<LifestyleRecommendation> {
+        return listOf(
+            LifestyleRecommendation(
+                id = "baseline_calibration",
+                title = "Calibrate Your Baseline",
+                category = "Protocol",
+                impact = "High Diagnostic Accuracy",
+                description = "Measure seated with feet flat on the floor after 5 minutes of quiet rest. Support your arm at heart level.",
+                evidenceNote = "Improper posture can elevate systolic readings by 6–10 mmHg."
+            )
         )
-    )
+    }
 
-    fun computeChartPoints(readings: List<BloodPressureReading>): List<ChartDataPoint> {
-        if (readings.isEmpty()) return emptyList()
+    fun computeChartPoints(logs: List<MeasurementEntity>): List<ChartDataPoint> {
+        if (logs.isEmpty()) return emptyList()
 
-        // Sort chronologically (oldest to newest)
-        val sorted = readings.sortedBy { it.timestamp }
+        val sortedLogs = logs.sortedBy { it.timestamp }
         val points = mutableListOf<ChartDataPoint>()
 
-        for (i in sorted.indices) {
-            val current = sorted[i]
-            val currentTime = current.timestamp
+        for (i in sortedLogs.indices) {
+            val current = sortedLogs[i]
+            val timestamp = current.timestamp
 
-            val t30 = currentTime - TimeUnit.DAYS.toMillis(30)
-            val t90 = currentTime - TimeUnit.DAYS.toMillis(90)
-            val t180 = currentTime - TimeUnit.DAYS.toMillis(180)
+            val thirtyDaysCutoff = timestamp - TimeUnit.DAYS.toMillis(30)
+            val ninetyDaysCutoff = timestamp - TimeUnit.DAYS.toMillis(90)
+            val oneEightyDaysCutoff = timestamp - TimeUnit.DAYS.toMillis(180)
 
-            // Calculate moving averages up to this point in time
-            val window30 = sorted.filter { it.timestamp in t30..currentTime && it.activityContext.isIdealForBaseline }
-            val window90 = sorted.filter { it.timestamp in t90..currentTime && it.activityContext.isIdealForBaseline }
-            val window180 = sorted.filter { it.timestamp in t180..currentTime && it.activityContext.isIdealForBaseline }
+            val window30 = sortedLogs.subList(0, i + 1).filter { it.timestamp >= thirtyDaysCutoff && !it.isQuarantined }
+            val window90 = sortedLogs.subList(0, i + 1).filter { it.timestamp >= ninetyDaysCutoff && !it.isQuarantined }
+            val window180 = sortedLogs.subList(0, i + 1).filter { it.timestamp >= oneEightyDaysCutoff && !it.isQuarantined }
 
             val ma30 = if (window30.isNotEmpty()) window30.map { it.systolic }.average() else null
             val ma90 = if (window90.isNotEmpty()) window90.map { it.systolic }.average() else null
@@ -348,15 +357,15 @@ object BaselineVelocityEngine {
 
             points.add(
                 ChartDataPoint(
-                    timestamp = currentTime,
+                    timestamp = timestamp,
                     rawSystolic = current.systolic,
                     rawDiastolic = current.diastolic,
                     heartRate = current.heartRate,
                     ma30Systolic = ma30,
                     ma90Systolic = ma90,
                     ma180Systolic = ma180,
-                    isResting = current.activityContext.isIdealForBaseline,
-                    contextTag = current.activityContext.displayName
+                    isResting = !current.isQuarantined && current.contextTag == "RESTING",
+                    contextTag = current.contextTag
                 )
             )
         }

@@ -3,26 +3,6 @@ package com.example.data
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-enum class ActivityContext(val displayName: String, val isIdealForBaseline: Boolean) {
-    RESTING("Resting (Seated > 5 min)", true),
-    POST_EXERCISE("Post-Exercise (< 30 min)", false),
-    STRESSED("High Stress / Anxious", false),
-    POST_MEDICATION("Post-Medication", true),
-    CAFFEINE_NICOTINE("Recent Caffeine / Nicotine", false)
-}
-
-enum class TimeOfDay(val displayName: String) {
-    MORNING("Morning (Waking / AM)",),
-    MIDDAY("Midday (Noon / PM)"),
-    EVENING("Evening (Pre-Dinner)",),
-    NIGHT("Night (Before Bed)")
-}
-
-enum class MeasurementArm(val displayName: String) {
-    LEFT("Left Arm"),
-    RIGHT("Right Arm")
-}
-
 enum class BpCategory(val label: String, val description: String) {
     NORMAL("Normal", "Systolic < 120 and Diastolic < 80 mmHg"),
     ELEVATED("Elevated", "Systolic 120-129 and Diastolic < 80 mmHg"),
@@ -31,18 +11,17 @@ enum class BpCategory(val label: String, val description: String) {
     CRISIS("Hypertensive Crisis", "Systolic > 180 and/or Diastolic > 120 mmHg")
 }
 
-@Entity(tableName = "blood_pressure_readings")
-data class BloodPressureReading(
+@Entity(tableName = "measurements")
+data class MeasurementEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val systolic: Int,
     val diastolic: Int,
     val heartRate: Int,
     val timestamp: Long = System.currentTimeMillis(),
-    val activityContext: ActivityContext = ActivityContext.RESTING,
-    val timeOfDay: TimeOfDay = TimeOfDay.MORNING,
-    val arm: MeasurementArm = MeasurementArm.LEFT,
-    val notes: String = ""
+    val contextTag: String = "RESTING", // "RESTING", "POST_EXERCISE", "CAFFEINE_STRESS"
+    val isQuarantined: Boolean = false,
+    val notes: String? = null
 ) {
     val pulsePressure: Int
         get() = systolic - diastolic
@@ -58,4 +37,7 @@ data class BloodPressureReading(
             systolic in 120..129 && diastolic < 80 -> BpCategory.ELEVATED
             else -> BpCategory.NORMAL
         }
+
+    val isCleanResting: Boolean
+        get() = !isQuarantined && contextTag == "RESTING"
 }

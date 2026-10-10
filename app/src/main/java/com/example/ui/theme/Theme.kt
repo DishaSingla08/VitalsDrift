@@ -1,6 +1,5 @@
 package com.example.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -8,12 +7,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
-
-enum class AppThemeMode(val title: String) {
-    SYSTEM("Auto / System"),
-    LIGHT("Light Mode"),
-    DARK("Dark Mode")
-}
 
 private val LightColorScheme = lightColorScheme(
     primary = LightPrimary,
@@ -86,15 +79,9 @@ object VitalsTheme {
 
 @Composable
 fun MyApplicationTheme(
-    themeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    isDark: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val isDark = when (themeMode) {
-        AppThemeMode.SYSTEM -> isSystemInDarkTheme()
-        AppThemeMode.LIGHT -> false
-        AppThemeMode.DARK -> true
-    }
-
     val colorScheme = if (isDark) DarkColorScheme else LightColorScheme
     val semanticColors = if (isDark) DarkSemanticColors else LightSemanticColors
 

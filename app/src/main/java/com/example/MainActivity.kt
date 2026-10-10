@@ -20,7 +20,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val uiState by vitalsViewModel.uiState.collectAsStateWithLifecycle()
-            MyApplicationTheme(themeMode = uiState.themeMode) {
+            MyApplicationTheme(isDark = uiState.isDarkMode) {
                 MainAppScreen(viewModel = vitalsViewModel)
             }
         }

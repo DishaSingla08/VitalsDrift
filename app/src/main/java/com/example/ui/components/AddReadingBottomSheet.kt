@@ -50,10 +50,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.ActivityContext
-import com.example.data.MeasurementArm
-import com.example.data.TimeOfDay
-import java.util.Calendar
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -63,9 +62,7 @@ fun AddReadingBottomSheet(
         systolic: Int,
         diastolic: Int,
         heartRate: Int,
-        activityContext: ActivityContext,
-        timeOfDay: TimeOfDay,
-        arm: MeasurementArm,
+        contextTag: String,
         notes: String
     ) -> Unit,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -73,21 +70,7 @@ fun AddReadingBottomSheet(
     var systolicInput by remember { mutableStateOf("120") }
     var diastolicInput by remember { mutableStateOf("80") }
     var heartRateInput by remember { mutableStateOf("72") }
-
-    // Automatic default time of day according to current system hour
-    val currentHour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
-    val initialTimeOfDay = remember {
-        when (currentHour) {
-            in 5..11 -> TimeOfDay.MORNING
-            in 12..16 -> TimeOfDay.MIDDAY
-            in 17..21 -> TimeOfDay.EVENING
-            else -> TimeOfDay.NIGHT
-        }
-    }
-
-    var selectedTimeOfDay by remember { mutableStateOf(initialTimeOfDay) }
-    var selectedActivityContext by remember { mutableStateOf(ActivityContext.RESTING) }
-    var selectedArm by remember { mutableStateOf(MeasurementArm.LEFT) }
+    var selectedContextTag by remember { mutableStateOf("RESTING") }
     var notesInput by remember { mutableStateOf("") }
 
     val sysInt = systolicInput.toIntOrNull()
@@ -104,7 +87,7 @@ fun AddReadingBottomSheet(
         } else null
     }
 
-    // Validation logic
+    // Anatomical validation logic
     val validationError by remember(sysInt, diaInt, hrInt) {
         derivedStateOf {
             when {
@@ -163,7 +146,7 @@ fun AddReadingBottomSheet(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "AHA/ACC Standard Protocol",
+                            text = "AHA/ACC Protocol • Room Persistence",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -180,64 +163,54 @@ fun AddReadingBottomSheet(
             // Vital Numeric Inputs
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedTextField(
                     value = systolicInput,
-                    onValueChange = { if (it.length <= 3 && it.all { c -> c.isDigit() }) systolicInput = it },
-                    label = { Text("Systolic") },
-                    placeholder = { Text("120") },
-                    suffix = { Text("mmHg", fontSize = 11.sp) },
-                    singleLine = true,
+                    onValueChange = { systolicInput = it.filter { char -> char.isDigit() }.take(3) },
+                    label = { Text("Systolic", fontSize = 12.sp) },
+                    suffix = { Text("mmHg", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("systolic_input"),
-                    shape = RoundedCornerShape(12.dp)
+                    modifier = Modifier.weight(1f).testTag("systolic_input"),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true
                 )
 
                 OutlinedTextField(
                     value = diastolicInput,
-                    onValueChange = { if (it.length <= 3 && it.all { c -> c.isDigit() }) diastolicInput = it },
-                    label = { Text("Diastolic") },
-                    placeholder = { Text("80") },
-                    suffix = { Text("mmHg", fontSize = 11.sp) },
-                    singleLine = true,
+                    onValueChange = { diastolicInput = it.filter { char -> char.isDigit() }.take(3) },
+                    label = { Text("Diastolic", fontSize = 12.sp) },
+                    suffix = { Text("mmHg", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("diastolic_input"),
-                    shape = RoundedCornerShape(12.dp)
+                    modifier = Modifier.weight(1f).testTag("diastolic_input"),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true
                 )
 
                 OutlinedTextField(
                     value = heartRateInput,
-                    onValueChange = { if (it.length <= 3 && it.all { c -> c.isDigit() }) heartRateInput = it },
-                    label = { Text("Pulse") },
-                    placeholder = { Text("72") },
-                    suffix = { Text("bpm", fontSize = 11.sp) },
-                    singleLine = true,
+                    onValueChange = { heartRateInput = it.filter { char -> char.isDigit() }.take(3) },
+                    label = { Text("Pulse", fontSize = 12.sp) },
+                    suffix = { Text("bpm", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("pulse_input"),
-                    shape = RoundedCornerShape(12.dp)
+                    modifier = Modifier.weight(0.9f).testTag("heart_rate_input"),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true
                 )
             }
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Auto-calculated Pulse Pressure & MAP pill
+            // Live Calculated Metrics Pill
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceAround
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceAround,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Pulse Pressure (PP)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -252,7 +225,7 @@ fun AddReadingBottomSheet(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Mean Arterial (MAP)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
-                            text = if (meanArterialPressure != null) "${String.format("%.1f", meanArterialPressure)} mmHg" else "--",
+                            text = if (meanArterialPressure != null) "${String.format(Locale.US, "%.1f", meanArterialPressure)} mmHg" else "--",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.secondary
@@ -290,39 +263,47 @@ fun AddReadingBottomSheet(
 
             // Contextual Tags: Activity State
             Text(
-                text = "Activity State & Context",
+                text = "Context & Activity State",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                text = "Baseline drift calculation prefers resting seated logs",
+                text = "Health Connect auto-quarantines logs within 30 min of exercise",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(6.dp))
 
+            val contextTags = listOf(
+                Pair("RESTING", "Resting (Seated > 5 min)"),
+                Pair("POST_EXERCISE", "Post-Exercise (< 30 min)"),
+                Pair("CAFFEINE_STRESS", "Caffeine / High Stress")
+            )
+
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                ActivityContext.values().forEach { ctx ->
+                contextTags.forEach { (tag, label) ->
+                    val isSelected = selectedContextTag == tag
+                    val isClean = tag == "RESTING"
                     FilterChip(
-                        selected = selectedActivityContext == ctx,
-                        onClick = { selectedActivityContext = ctx },
-                        label = { Text(ctx.displayName, fontSize = 12.sp) },
-                        modifier = Modifier.testTag("context_chip_${ctx.name}"),
+                        selected = isSelected,
+                        onClick = { selectedContextTag = tag },
+                        label = { Text(label, fontSize = 12.sp) },
+                        modifier = Modifier.testTag("context_chip_$tag"),
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = if (ctx.isIdealForBaseline) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
-                            selectedLabelColor = if (ctx.isIdealForBaseline) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
+                            selectedContainerColor = if (isClean) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
+                            selectedLabelColor = if (isClean) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
                         )
                     )
                 }
             }
 
-            // Non-resting warning card
-            AnimatedVisibility(visible = !selectedActivityContext.isIdealForBaseline) {
+            // Non-resting quarantine alert notice
+            AnimatedVisibility(visible = selectedContextTag != "RESTING") {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -342,7 +323,7 @@ fun AddReadingBottomSheet(
                             modifier = Modifier.size(18.dp)
                         )
                         Text(
-                            text = "Acute physical exertion or stress elevates BP transiently. This entry will be saved but quarantined from long-term baseline moving averages.",
+                            text = "Entry will be saved to Room but quarantined (isQuarantined=true) from baseline moving average calculations to prevent skew.",
                             style = MaterialTheme.typography.bodySmall,
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurface
@@ -353,49 +334,23 @@ fun AddReadingBottomSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Timestamp Auto-detected from clock
+            // Timestamp Auto-detected
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Log Timestamp",
+                    text = "Timestamp",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "Auto-synced with device clock",
+                    text = SimpleDateFormat("MMM dd, h:mm a", Locale.getDefault()).format(Date()),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold
                 )
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Arm selection
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Measurement Arm",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MeasurementArm.values().forEach { arm ->
-                        FilterChip(
-                            selected = selectedArm == arm,
-                            onClick = { selectedArm = arm },
-                            label = { Text(arm.displayName, fontSize = 12.sp) },
-                            modifier = Modifier.testTag("arm_chip_${arm.name}")
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -405,7 +360,7 @@ fun AddReadingBottomSheet(
                 value = notesInput,
                 onValueChange = { notesInput = it },
                 label = { Text("Clinical Notes / Symptoms (Optional)") },
-                placeholder = { Text("e.g. Mild headache, took lisinopril 10mg, poor sleep") },
+                placeholder = { Text("e.g. Seated arm at heart level, took morning lisinopril") },
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("notes_input"),
@@ -423,9 +378,7 @@ fun AddReadingBottomSheet(
                             sysInt,
                             diaInt,
                             hrInt,
-                            selectedActivityContext,
-                            selectedTimeOfDay,
-                            selectedArm,
+                            selectedContextTag,
                             notesInput.trim()
                         )
                     }
@@ -440,7 +393,7 @@ fun AddReadingBottomSheet(
             ) {
                 Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Confirm & Record Reading", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("Confirm & Save to Room", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             }
 
             Spacer(modifier = Modifier.height(12.dp))

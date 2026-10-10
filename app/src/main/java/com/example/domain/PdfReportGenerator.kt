@@ -254,7 +254,7 @@ object PdfReportGenerator {
         paint.color = Color.rgb(185, 28, 28)
         paint.textSize = 10f
         paint.isFakeBoldText = true
-        canvas.drawText("Quarantined Readings Excluded: ${summary.nonRestingReadingsCount} of ${summary.totalReadings} entries", 52f, y + 24f, paint)
+        canvas.drawText("Quarantined Readings Excluded: ${summary.quarantinedCount} of ${summary.totalReadings} entries", 52f, y + 24f, paint)
 
         paint.color = Color.rgb(100, 116, 139)
         paint.textSize = 9f

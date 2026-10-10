@@ -477,7 +477,7 @@ private fun ClinicalMetricsSummaryCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = "Quarantine Log Summary: ${summary.nonRestingReadingsCount} non-resting/exercise readings excluded to assure moving average integrity.",
+                        text = "Quarantine Log Summary: ${summary.quarantinedCount} non-resting/exercise readings excluded to assure moving average integrity.",
                         style = MaterialTheme.typography.bodySmall,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurface

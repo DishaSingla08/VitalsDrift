@@ -2,10 +2,10 @@ package com.example.domain
 
 import android.content.Context
 import android.content.Intent
-import com.example.data.BloodPressureReading
 import com.example.data.BpCategory
-import com.example.data.TimeOfDay
+import com.example.data.MeasurementEntity
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -30,26 +30,31 @@ data class ClinicalPeriodSummary(
     val stage1Count: Int,
     val stage2Count: Int,
     val crisisCount: Int,
-    val nonRestingReadingsCount: Int,
-    val latestReadings: List<BloodPressureReading>
+    val quarantinedCount: Int,
+    val latestReadings: List<MeasurementEntity>
 )
 
 object DoctorReportGenerator {
 
-    fun generateSummary(readings: List<BloodPressureReading>, days: Int): ClinicalPeriodSummary? {
+    fun generateSummary(logs: List<MeasurementEntity>, days: Int): ClinicalPeriodSummary? {
         val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(days.toLong())
-        val periodReadings = readings.filter { it.timestamp >= cutoff }
+        val periodLogs = logs.filter { it.timestamp >= cutoff }
 
-        if (periodReadings.isEmpty()) return null
+        if (periodLogs.isEmpty()) return null
 
-        val total = periodReadings.size
-        val avgSys = periodReadings.map { it.systolic }.average().roundToInt()
-        val avgDia = periodReadings.map { it.diastolic }.average().roundToInt()
-        val avgHr = periodReadings.map { it.heartRate }.average().roundToInt()
-        val avgPp = periodReadings.map { it.pulsePressure }.average().roundToInt()
-        val avgMap = periodReadings.map { it.meanArterialPressure }.average()
+        val total = periodLogs.size
+        val avgSys = periodLogs.map { it.systolic }.average().roundToInt()
+        val avgDia = periodLogs.map { it.diastolic }.average().roundToInt()
+        val avgHr = periodLogs.map { it.heartRate }.average().roundToInt()
+        val avgPp = periodLogs.map { it.pulsePressure }.average().roundToInt()
+        val avgMap = periodLogs.map { it.meanArterialPressure }.average()
 
-        val mornings = periodReadings.filter { it.timeOfDay == TimeOfDay.MORNING }
+        val cal = Calendar.getInstance()
+        val mornings = periodLogs.filter {
+            cal.timeInMillis = it.timestamp
+            val hour = cal.get(Calendar.HOUR_OF_DAY)
+            hour in 5..11
+        }
         val morningAvg = if (mornings.isNotEmpty()) {
             Pair(
                 mornings.map { it.systolic }.average().roundToInt(),
@@ -57,7 +62,11 @@ object DoctorReportGenerator {
             )
         } else null
 
-        val evenings = periodReadings.filter { it.timeOfDay == TimeOfDay.EVENING || it.timeOfDay == TimeOfDay.NIGHT }
+        val evenings = periodLogs.filter {
+            cal.timeInMillis = it.timestamp
+            val hour = cal.get(Calendar.HOUR_OF_DAY)
+            hour in 17..23
+        }
         val eveningAvg = if (evenings.isNotEmpty()) {
             Pair(
                 evenings.map { it.systolic }.average().roundToInt(),
@@ -65,17 +74,17 @@ object DoctorReportGenerator {
             )
         } else null
 
-        val minSys = periodReadings.minByOrNull { it.systolic }?.let { Pair(it.systolic, it.diastolic) } ?: Pair(avgSys, avgDia)
-        val maxSys = periodReadings.maxByOrNull { it.systolic }?.let { Pair(it.systolic, it.diastolic) } ?: Pair(avgSys, avgDia)
+        val minSys = periodLogs.minByOrNull { it.systolic }?.let { Pair(it.systolic, it.diastolic) } ?: Pair(avgSys, avgDia)
+        val maxSys = periodLogs.maxByOrNull { it.systolic }?.let { Pair(it.systolic, it.diastolic) } ?: Pair(avgSys, avgDia)
 
         var norm = 0
         var elev = 0
         var s1 = 0
         var s2 = 0
         var cris = 0
-        var nonResting = 0
+        var quarantined = 0
 
-        for (r in periodReadings) {
+        for (r in periodLogs) {
             when (r.category) {
                 BpCategory.NORMAL -> norm++
                 BpCategory.ELEVATED -> elev++
@@ -83,8 +92,8 @@ object DoctorReportGenerator {
                 BpCategory.STAGE_2 -> s2++
                 BpCategory.CRISIS -> cris++
             }
-            if (!r.activityContext.isIdealForBaseline) {
-                nonResting++
+            if (r.isQuarantined) {
+                quarantined++
             }
         }
 
@@ -107,8 +116,8 @@ object DoctorReportGenerator {
             stage1Count = s1,
             stage2Count = s2,
             crisisCount = cris,
-            nonRestingReadingsCount = nonResting,
-            latestReadings = periodReadings.take(15)
+            quarantinedCount = quarantined,
+            latestReadings = periodLogs.take(15)
         )
     }
 
@@ -175,14 +184,14 @@ object DoctorReportGenerator {
         }
         sb.appendLine()
 
-        sb.appendLine("5. PHYSIOLOGICAL CONTEXT NOTES:")
-        sb.appendLine("  • Outlier / Non-Resting Logs: ${summary.nonRestingReadingsCount} of ${summary.totalReadings} entries were flagged with acute context (exercise/high stress).")
+        sb.appendLine("5. CONTEXT VALIDATOR & QUARANTINED LOGS:")
+        sb.appendLine("  • Quarantined Logs: ${summary.quarantinedCount} of ${summary.totalReadings} entries were flagged within 30 min of exercise/acute stress and quarantined from baseline.")
         sb.appendLine()
 
         sb.appendLine("6. RECENT OBSERVATIONS (LAST ${summary.latestReadings.size} ENTRIES):")
         for (r in summary.latestReadings) {
             val dateStr = dateFormat.format(Date(r.timestamp))
-            sb.appendLine("  - $dateStr | ${r.systolic}/${r.diastolic} mmHg | HR ${r.heartRate} bpm | ${r.activityContext.displayName} | ${r.arm.displayName}${if (r.notes.isNotBlank()) " | Note: ${r.notes}" else ""}")
+            sb.appendLine("  - $dateStr | ${r.systolic}/${r.diastolic} mmHg | HR ${r.heartRate} bpm | ${r.contextTag}${if (r.isQuarantined) " [QUARANTINED]" else ""}${if (!r.notes.isNullOrBlank()) " | Note: ${r.notes}" else ""}")
         }
         sb.appendLine()
         sb.appendLine("----------------------------------------------------")

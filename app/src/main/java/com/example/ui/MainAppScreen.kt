@@ -49,7 +49,6 @@ import com.example.ui.screens.AnalyticsScreen
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.DoctorReportScreen
 import com.example.ui.screens.HistoryScreen
-import com.example.ui.theme.AppThemeMode
 
 enum class AppDestination(val title: String, val icon: ImageVector, val tag: String) {
     DASHBOARD("Dashboard", Icons.Default.Home, "nav_dashboard"),
@@ -100,18 +99,14 @@ fun MainAppScreen(
                         )
                     },
                     actions = {
-                        // Theme Toggle Icon Button (Sun / Moon)
+                        // Exactly 1-Click Instant Theme Toggle (Sun/Moon icon)
                         IconButton(
                             onClick = { viewModel.toggleTheme() },
                             modifier = Modifier.testTag("theme_toggle_button")
                         ) {
                             Icon(
-                                imageVector = when (uiState.themeMode) {
-                                    AppThemeMode.LIGHT -> Icons.Default.DarkMode
-                                    AppThemeMode.DARK -> Icons.Default.LightMode
-                                    AppThemeMode.SYSTEM -> Icons.Default.DarkMode
-                                },
-                                contentDescription = "Toggle Theme (Light / Dark)",
+                                imageVector = if (uiState.isDarkMode) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = if (uiState.isDarkMode) "Switch to Light Mode" else "Switch to Dark Mode",
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -200,7 +195,6 @@ fun MainAppScreen(
                             uiState = uiState,
                             onOpenLogSheet = { isAddReadingSheetOpen = true },
                             onSelectRange = { viewModel.setChartRange(it) },
-                            onDeleteReading = { viewModel.deleteReading(it) },
                             onNavigateToReport = { currentDestination = AppDestination.REPORT },
                             onExplainMetric = { viewModel.explainMetric(it) },
                             onSyncWearables = { viewModel.syncWearables() }
@@ -212,7 +206,7 @@ fun MainAppScreen(
                     AppDestination.HISTORY -> {
                         HistoryScreen(
                             uiState = uiState,
-                            onDeleteReading = { viewModel.deleteReading(it) },
+                            onDeleteReading = { viewModel.deleteLog(it) },
                             onSeedSampleData = { viewModel.seedSampleData() },
                             onClearAllData = { viewModel.clearAllData() },
                             onOpenLogSheet = { isAddReadingSheetOpen = true }
@@ -243,14 +237,12 @@ fun MainAppScreen(
     if (isAddReadingSheetOpen) {
         AddReadingBottomSheet(
             onDismiss = { isAddReadingSheetOpen = false },
-            onSaveReading = { sys, dia, hr, ctx, tod, arm, notes ->
+            onSaveReading = { sys, dia, hr, contextTag, notes ->
                 viewModel.saveReading(
                     systolic = sys,
                     diastolic = dia,
                     heartRate = hr,
-                    activityContext = ctx,
-                    timeOfDay = tod,
-                    arm = arm,
+                    contextTag = contextTag,
                     notes = notes
                 )
                 isAddReadingSheetOpen = false
